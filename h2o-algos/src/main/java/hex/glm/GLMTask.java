@@ -601,11 +601,12 @@ public abstract class GLMTask  {
         double NA = _dinfo._numMeans[cid];
         Chunk c = chks[cid+_dinfo._cats];
         double scale = _dinfo._normMul == null?1:_dinfo._normMul[cid];
+        double offset = _dinfo._normSub == null?0:_dinfo._normSub[cid];
         if(c.isSparseZero()){
           double g = 0;
           int nVals = c.getSparseDoubles(vals,ids,NA);
           for(int i = 0; i < nVals; ++i)
-            g += vals[i]*scale*etas[ids[i]];
+            g += (vals[i]-offset)*scale*etas[ids[i]];
           _gradient[numOff+cid] = g;
         } else if(c.isSparseNA()){
           double off = _dinfo._normSub == null?0:_dinfo._normSub[cid];
@@ -690,8 +691,16 @@ public abstract class GLMTask  {
           double mu = _glmf.linkInv(es[i]);
           l += ws[i] * _glmf.likelihood(ys[i], mu);
           double var = _glmf.variance(mu);
-          if (var < 1e-6) var = 1e-6;
-          es[i] = ws[i] * (mu - ys[i]) / (var * _glmf.linkDeriv(mu));
+          if (var < hex.glm.GLMModel._EPS) var = hex.glm.GLMModel._EPS; // es is the gradient without the predictor term
+          if (_glmf._family.equals(Family.tweedie)) {
+            _glmf._oneOeta = 1.0/(es[i]==0?hex.glm.GLMModel._EPS:es[i]);
+            _glmf._oneOetaSquare = _glmf._oneOeta*_glmf._oneOeta;
+            es[i] = ws[i]*_glmf.linkInvDeriv(mu)*(_glmf._var_power==1?(ys[i]/mu-1):
+                    (_glmf._var_power==2?(ys[i]*Math.pow(mu, -_glmf._var_power)-1/mu):
+                            (ys[i]*Math.pow(mu, -_glmf._var_power)-Math.pow(mu, _glmf._oneMinusVarPower))));
+          } else {
+            es[i] = ws[i] * (mu - ys[i]) / (var * _glmf.linkDeriv(mu));
+          }
         }
       }
       _likelihood = l;
@@ -1591,7 +1600,7 @@ public abstract class GLMTask  {
       } else if(_beta != null) {
         _glmf.computeWeights(y, r.innerProduct(_beta) + _sparseOffset, r.offset, r.weight, _w);
         w = _w.w; // hessian without the xij xik part
-        wz = w*_w.z;
+        wz = _glmf._family.equals(Family.tweedie)?_w.z:w*_w.z;
         _likelihood += _w.l;
       } else {
         w = r.weight;
